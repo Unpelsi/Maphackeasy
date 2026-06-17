@@ -2,11 +2,10 @@
 // POST /api/radar → DLL pushes game state
 // GET  /api/radar → browser polls game state
 
-// Module-level state persists across warm invocations
 let latestState = null;
 let lastUpdate = 0;
 
-module.exports = (req, res) => {
+export default function handler(req, res) {
   // CORS
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
@@ -18,35 +17,34 @@ module.exports = (req, res) => {
   }
 
   if (req.method === 'POST') {
-    // Vercel auto-parses JSON body into req.body
     const data = req.body;
 
     if (!data) {
       return res.status(400).json({ error: 'empty body' });
     }
 
-    if (!data.localPlayer || !Array.isArray(data.players)) {
-      return res.status(400).json({ error: 'invalid format' });
-    }
-
+    // Accept any JSON from DLL
     latestState = data;
     lastUpdate = Date.now();
     return res.status(200).json({ ok: true, ts: lastUpdate });
   }
 
-  // GET — browser polls state
-  if (!latestState) {
+  if (req.method === 'GET') {
+    if (!latestState) {
+      return res.status(200).json({
+        error: 'no data yet',
+        localPlayer: null,
+        players: [],
+        bomb: { found: false }
+      });
+    }
+
     return res.status(200).json({
-      error: 'no data yet',
-      localPlayer: null,
-      players: [],
-      bomb: { found: false }
+      ...latestState,
+      _serverTs: lastUpdate,
+      _age: Date.now() - lastUpdate
     });
   }
 
-  return res.status(200).json({
-    ...latestState,
-    _serverTs: lastUpdate,
-    _age: Date.now() - lastUpdate
-  });
-};
+  return res.status(405).json({ error: 'method not allowed' });
+}
