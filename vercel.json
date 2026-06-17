@@ -1,0 +1,13 @@
+{
+  "version": 2,
+  "name": "oxrana-loutaba-radar",
+  "functions": {
+    "api/radar.js": {
+      "runtime": "@vercel/node@3"
+    }
+  },
+  "routes": [
+    { "src": "/api/radar", "dest": "/api/radar" },
+    { "src": "/", "dest": "/index.html" }
+  ]
+}
