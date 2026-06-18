@@ -3,7 +3,7 @@
 // GET  /api/radar → browser polls game state
 
 const STATE_KEY = 'radar:latest';
-const STATE_TTL = 3;
+const STATE_TTL = 5;
 
 let redis = null;
 let redisOk = false;

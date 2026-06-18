@@ -83,8 +83,7 @@ async function fetchData(){
       debugEl.textContent = 'Players: ' + (data.players ? data.players.length : 0);
       return;
     }
-    // API responded but no localPlayer — show error message
-    lastData = data;
+    // API responded but no localPlayer — keep last good data
     debugEl.textContent = data.error || 'Waiting for game...';
   }catch(e){
     if(lastFetchOk){ lastFetchOk = false; statusEl.textContent = 'Disconnected'; statusEl.className = 'status dead'; }
