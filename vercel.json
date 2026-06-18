@@ -1,4 +1,11 @@
 {
   "name": "oxrana-loutaba-radar",
-  "version": 2
+  "version": 2,
+  "functions": {
+    "api/radar.js": {
+      "runtime": "nodejs20.x",
+      "memory": 128,
+      "maxDuration": 10
+    }
+  }
 }
