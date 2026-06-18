@@ -60,7 +60,6 @@ const hpEl = document.getElementById('hp');
 
 let lastData = null;
 let lastFetchOk = false;
-let dataSource = 'none';
 
 function resizeCanvas(){
   const s = parseInt(sizeEl.value);
@@ -70,39 +69,27 @@ function resizeCanvas(){
 resizeCanvas();
 sizeEl.addEventListener('change', resizeCanvas);
 
-// Try LOCAL server first (works instantly on same machine), then relay
-const ENDPOINTS = [
-  { url: 'http://localhost:8080/api/state', label: 'local' },
-  { url: '/api/radar', label: 'relay' }
-];
-
-let currentEndpoint = 0;
-
 async function fetchData(){
-  for(let attempt = 0; attempt < ENDPOINTS.length; attempt++){
-    const ep = ENDPOINTS[(currentEndpoint + attempt) % ENDPOINTS.length];
-    try{
-      const ctrl = new AbortController();
-      const timer = setTimeout(() => ctrl.abort(), 2000);
-      const r = await fetch(ep.url, { signal: ctrl.signal });
-      clearTimeout(timer);
-      if(!r.ok) continue;
-      const data = await r.json();
-      if(data && data.localPlayer){
-        lastData = data;
-        dataSource = ep.label;
-        if(currentEndpoint !== (currentEndpoint + attempt) % ENDPOINTS.length){
-          currentEndpoint = (currentEndpoint + attempt) % ENDPOINTS.length;
-        }
-        if(!lastFetchOk){ lastFetchOk = true; statusEl.textContent = 'Live'; statusEl.className = 'status live'; }
-        debugEl.textContent = 'Source: ' + ep.label + ' | players: ' + (data.players ? data.players.length : 0);
-        return;
-      }
-    }catch(e){}
+  try{
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 3000);
+    const r = await fetch('/api/radar', { signal: ctrl.signal });
+    clearTimeout(timer);
+    if(!r.ok) throw 0;
+    const data = await r.json();
+    if(data && data.localPlayer){
+      lastData = data;
+      if(!lastFetchOk){ lastFetchOk = true; statusEl.textContent = 'Live'; statusEl.className = 'status live'; }
+      debugEl.textContent = 'Players: ' + (data.players ? data.players.length : 0);
+      return;
+    }
+    // API responded but no localPlayer — show error message
+    lastData = data;
+    debugEl.textContent = data.error || 'Waiting for game...';
+  }catch(e){
+    if(lastFetchOk){ lastFetchOk = false; statusEl.textContent = 'Disconnected'; statusEl.className = 'status dead'; }
+    debugEl.textContent = 'Connecting to relay...';
   }
-  // No data from any source
-  if(lastFetchOk){ lastFetchOk = false; statusEl.textContent = 'Disconnected'; statusEl.className = 'status dead'; }
-  debugEl.textContent = 'No data. Open http://localhost:8080 or enable relay.';
 }
 
 function draw(){
@@ -126,7 +113,8 @@ function draw(){
 
   if(!lastData || !lastData.localPlayer){
     ctx.fillStyle = '#555'; ctx.font = '14px Tahoma'; ctx.textAlign = 'center';
-    ctx.fillText('Waiting for data...', cx, cy);
+    const msg = (lastData && lastData.error) ? lastData.error : 'Waiting for data...';
+    ctx.fillText(msg, cx, cy);
     return;
   }
 
