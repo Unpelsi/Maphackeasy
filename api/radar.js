@@ -3,20 +3,17 @@
 // GET  /api/radar → browser polls game state
 
 const STATE_KEY = 'radar:latest';
-const STATE_TTL = 3; // seconds
+const STATE_TTL = 3;
 
 let redis = null;
 let redisOk = false;
 
-// Init Redis — Upstash env vars are auto-injected by Vercel integration
 function getRedis() {
   if (redisOk) return redis;
-  if (redis) return redis; // still trying
-
+  if (redis) return redis;
   try {
     const url = process.env.UPSTASH_REDIS_REST_URL || process.env.KV_REST_API_URL;
     const token = process.env.UPSTASH_REDIS_REST_TOKEN || process.env.KV_REST_API_TOKEN;
-
     if (url && token) {
       const { Redis } = require('@upstash/redis');
       redis = new Redis({ url, token });
@@ -36,6 +33,26 @@ function getRedis() {
 let latestState = null;
 let lastUpdate = 0;
 
+// Vercel serverless functions don't always auto-parse req.body
+function readBody(req) {
+  return new Promise((resolve) => {
+    if (req.body !== undefined && req.body !== null) {
+      return resolve(req.body);
+    }
+    let raw = '';
+    req.on('data', (chunk) => { raw += chunk; });
+    req.on('end', () => {
+      if (!raw) return resolve(null);
+      try {
+        resolve(JSON.parse(raw));
+      } catch {
+        resolve(null);
+      }
+    });
+    req.on('error', () => resolve(null));
+  });
+}
+
 module.exports = async (req, res) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
@@ -48,24 +65,19 @@ module.exports = async (req, res) => {
   }
 
   if (req.method === 'POST') {
-    let data = req.body;
+    const data = await readBody(req);
     if (!data) {
       res.status(400).json({ error: 'empty body' });
       return;
     }
-    if (typeof data === 'string') {
-      try { data = JSON.parse(data); } catch {
-        res.status(400).json({ error: 'invalid JSON' });
-        return;
-      }
-    }
 
     const now = Date.now();
+    const payload = { ...data, _ts: now };
     const r = getRedis();
 
     if (r) {
       try {
-        await r.set(STATE_KEY, data, { ex: STATE_TTL });
+        await r.set(STATE_KEY, payload, { ex: STATE_TTL });
         res.status(200).json({ ok: true, ts: now, storage: 'redis' });
         return;
       } catch (e) {
@@ -73,8 +85,7 @@ module.exports = async (req, res) => {
       }
     }
 
-    // Fallback to in-memory
-    latestState = data;
+    latestState = payload;
     lastUpdate = now;
     res.status(200).json({ ok: true, ts: now, storage: 'memory' });
     return;
@@ -87,7 +98,8 @@ module.exports = async (req, res) => {
     try {
       const stored = await r.get(STATE_KEY);
       if (stored) {
-        res.status(200).json({ ...stored, _age: Date.now() - (stored._ts || 0) });
+        const age = Date.now() - (stored._ts || 0);
+        res.status(200).json({ ...stored, _age: age });
         return;
       }
     } catch (e) {
@@ -95,11 +107,11 @@ module.exports = async (req, res) => {
     }
   }
 
-  // Fallback in-memory
   if (latestState) {
-    res.status(200).json({ ...latestState, _age: Date.now() - lastUpdate });
+    const age = Date.now() - lastUpdate;
+    res.status(200).json({ ...latestState, _age: age });
     return;
   }
 
-  res.status(200).json({ error: 'no data yet', localPlayer: null, players: [], bomb: { found: false } });
+  res.status(200).json({ error: 'no data yet', localPlayer: null, players: [], bomb: { found: false }, _age: 0 });
 };
