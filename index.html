@@ -73,12 +73,13 @@ sizeEl.addEventListener('change', resizeCanvas);
 async function fetchData(){
   try{
     const r = await fetch('/api/radar');
-    if(!r.ok) throw 0;
+    if(!r.ok) { debugEl.textContent = 'API HTTP ' + r.status; throw 0; }
     lastData = await r.json();
     const age = lastData._age || 0;
-    debugEl.textContent = 'API lag: ' + age + 'ms | poll: ' + pollMs + 'ms';
+    debugEl.textContent = 'OK | age:' + age + 'ms | players:' + (lastData.players?lastData.players.length:0) + ' | lp:' + (lastData.localPlayer?'yes':'no');
     if(!lastFetchOk){ lastFetchOk=true; statusEl.textContent='Live'; statusEl.className='status live'; }
   }catch(e){
+    debugEl.textContent = 'FETCH FAILED';
     if(lastFetchOk){ lastFetchOk=false; statusEl.textContent='Disconnected'; statusEl.className='status dead'; }
   }
 }
@@ -107,8 +108,18 @@ function draw(){
 
   if(!lastData || !lastData.localPlayer){
     ctx.fillStyle = '#555'; ctx.font = '14px Tahoma'; ctx.textAlign='center';
-    const msg = lastData && lastData.error ? lastData.error : 'Waiting for data...';
+    let msg = 'Waiting for data...';
+    if(lastData){
+      if(lastData.localPlayer === null && lastData.players && lastData.players.length > 0){
+        msg = 'No local player — are you in a game?';
+      } else if(lastData.error){
+        msg = lastData.error;
+      }
+    }
     ctx.fillText(msg, cx, cy);
+    // Smaller: show raw status
+    ctx.fillStyle = '#444'; ctx.font = '10px Tahoma';
+    ctx.fillText('Last API: ' + (lastData ? JSON.stringify(lastData).substring(0, 60) : 'none'), cx, cy + 20);
     return;
   }
 
