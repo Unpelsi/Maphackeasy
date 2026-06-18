@@ -60,7 +60,7 @@ const hpEl = document.getElementById('hp');
 
 let lastData = null;
 let lastFetchOk = false;
-let pollMs = 250;
+let dataSource = 'none';
 
 function resizeCanvas(){
   const s = parseInt(sizeEl.value);
@@ -70,18 +70,39 @@ function resizeCanvas(){
 resizeCanvas();
 sizeEl.addEventListener('change', resizeCanvas);
 
+// Try LOCAL server first (works instantly on same machine), then relay
+const ENDPOINTS = [
+  { url: 'http://localhost:8080/api/state', label: 'local' },
+  { url: '/api/radar', label: 'relay' }
+];
+
+let currentEndpoint = 0;
+
 async function fetchData(){
-  try{
-    const r = await fetch('/api/radar');
-    if(!r.ok) { debugEl.textContent = 'API HTTP ' + r.status; throw 0; }
-    lastData = await r.json();
-    const age = lastData._age || 0;
-    debugEl.textContent = 'OK | age:' + age + 'ms | players:' + (lastData.players?lastData.players.length:0) + ' | lp:' + (lastData.localPlayer?'yes':'no');
-    if(!lastFetchOk){ lastFetchOk=true; statusEl.textContent='Live'; statusEl.className='status live'; }
-  }catch(e){
-    debugEl.textContent = 'FETCH FAILED';
-    if(lastFetchOk){ lastFetchOk=false; statusEl.textContent='Disconnected'; statusEl.className='status dead'; }
+  for(let attempt = 0; attempt < ENDPOINTS.length; attempt++){
+    const ep = ENDPOINTS[(currentEndpoint + attempt) % ENDPOINTS.length];
+    try{
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 2000);
+      const r = await fetch(ep.url, { signal: ctrl.signal });
+      clearTimeout(timer);
+      if(!r.ok) continue;
+      const data = await r.json();
+      if(data && data.localPlayer){
+        lastData = data;
+        dataSource = ep.label;
+        if(currentEndpoint !== (currentEndpoint + attempt) % ENDPOINTS.length){
+          currentEndpoint = (currentEndpoint + attempt) % ENDPOINTS.length;
+        }
+        if(!lastFetchOk){ lastFetchOk = true; statusEl.textContent = 'Live'; statusEl.className = 'status live'; }
+        debugEl.textContent = 'Source: ' + ep.label + ' | players: ' + (data.players ? data.players.length : 0);
+        return;
+      }
+    }catch(e){}
   }
+  // No data from any source
+  if(lastFetchOk){ lastFetchOk = false; statusEl.textContent = 'Disconnected'; statusEl.className = 'status dead'; }
+  debugEl.textContent = 'No data. Open http://localhost:8080 or enable relay.';
 }
 
 function draw(){
@@ -89,37 +110,23 @@ function draw(){
   const cx = canvas.width/2, cy = canvas.height/2;
   const radius = canvas.width/2 - 4;
 
-  // BG
   ctx.fillStyle = 'rgba(0,0,0,0.7)';
   ctx.beginPath(); ctx.arc(cx,cy,radius,0,Math.PI*2); ctx.fill();
   ctx.strokeStyle = '#1f2937'; ctx.lineWidth = 2;
   ctx.beginPath(); ctx.arc(cx,cy,radius,0,Math.PI*2); ctx.stroke();
 
-  // Crosshair
   ctx.strokeStyle = 'rgba(60,60,60,0.4)'; ctx.lineWidth = 1;
   ctx.beginPath(); ctx.moveTo(cx-radius,cy); ctx.lineTo(cx+radius,cy);
   ctx.moveTo(cx,cy-radius); ctx.lineTo(cx,cy+radius); ctx.stroke();
 
-  // Rings
   for(let i=1;i<=3;i++){
     ctx.beginPath(); ctx.arc(cx,cy,radius*i/4,0,Math.PI*2);
     ctx.strokeStyle='rgba(40,40,50,0.3)'; ctx.stroke();
   }
 
   if(!lastData || !lastData.localPlayer){
-    ctx.fillStyle = '#555'; ctx.font = '14px Tahoma'; ctx.textAlign='center';
-    let msg = 'Waiting for data...';
-    if(lastData){
-      if(lastData.localPlayer === null && lastData.players && lastData.players.length > 0){
-        msg = 'No local player — are you in a game?';
-      } else if(lastData.error){
-        msg = lastData.error;
-      }
-    }
-    ctx.fillText(msg, cx, cy);
-    // Smaller: show raw status
-    ctx.fillStyle = '#444'; ctx.font = '10px Tahoma';
-    ctx.fillText('Last API: ' + (lastData ? JSON.stringify(lastData).substring(0, 60) : 'none'), cx, cy + 20);
+    ctx.fillStyle = '#555'; ctx.font = '14px Tahoma'; ctx.textAlign = 'center';
+    ctx.fillText('Waiting for data...', cx, cy);
     return;
   }
 
@@ -134,13 +141,9 @@ function draw(){
 
   function project(wx, wy){
     let dx = wx - lp.x, dy = wy - lp.y;
-    let rx, ry;
-    if(doRotate){
-      rx = dx * cosY - dy * sinY;
-      ry = dx * sinY + dy * cosY;
-    }else{rx = dx; ry = dy;}
-    let px = cx + rx / scale;
-    let py = cy - ry / scale;
+    let rx = doRotate ? dx * cosY - dy * sinY : dx;
+    let ry = doRotate ? dx * sinY + dy * cosY : dy;
+    let px = cx + rx / scale, py = cy - ry / scale;
     let ddx = px - cx, ddy = py - cy;
     let dist = Math.sqrt(ddx*ddx + ddy*ddy);
     let maxR = radius - 8;
@@ -148,7 +151,6 @@ function draw(){
     return {x:px, y:py};
   }
 
-  // Bomb
   if(lastData.bomb && lastData.bomb.found){
     const bp = project(lastData.bomb.x, lastData.bomb.y);
     ctx.fillStyle = '#ffdc00'; ctx.fillRect(bp.x-5, bp.y-5, 10, 10);
@@ -159,7 +161,6 @@ function draw(){
     }
   }
 
-  // Players
   if(lastData.players){
     for(const p of lastData.players){
       const pp = project(p.x, p.y);
@@ -183,13 +184,11 @@ function draw(){
     }
   }
 
-  // Local player (center dot)
   ctx.fillStyle = '#ffffff';
   ctx.beginPath(); ctx.arc(cx, cy, 5, 0, Math.PI*2); ctx.fill();
   ctx.strokeStyle = '#000'; ctx.lineWidth = 1.5;
   ctx.beginPath(); ctx.arc(cx, cy, 5, 0, Math.PI*2); ctx.stroke();
 
-  // View direction
   if(doRotate){
     ctx.strokeStyle = '#00e5ff'; ctx.lineWidth = 2;
     ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(cx, cy - 16); ctx.stroke();
@@ -203,7 +202,7 @@ function draw(){
   requestAnimationFrame(draw);
 }
 
-setInterval(fetchData, pollMs);
+setInterval(fetchData, 200);
 fetchData();
 requestAnimationFrame(draw);
 </script>
