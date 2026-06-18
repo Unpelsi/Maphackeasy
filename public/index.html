@@ -67,8 +67,8 @@ function loadMapImage(mapName){
   if(mapName === currentMapName && mapImg) return;
   currentMapName = mapName;
   mapImg = new Image();
-  mapImg.onload = () => { console.log('Map image loaded:', mapName); };
-  mapImg.onerror = () => { mapImg = null; };
+  mapImg.onload = () => { console.log('Map loaded:', mapName, mapImg.naturalWidth + 'x' + mapImg.naturalHeight); };
+  mapImg.onerror = () => { mapImg = null; console.warn('Map image not found:', mapName); };
   mapImg.src = '/maps/' + mapName + '_radar_psd.png';
 }
 
@@ -94,7 +94,6 @@ async function fetchData(){
       debugEl.textContent = 'Players: ' + (data.players ? data.players.length : 0);
       return;
     }
-    // API responded but no localPlayer — keep last good data
     debugEl.textContent = data.error || 'Waiting for game...';
   }catch(e){
     if(lastFetchOk){ lastFetchOk = false; statusEl.textContent = 'Disconnected'; statusEl.className = 'status dead'; }
@@ -108,19 +107,11 @@ function draw(){
   const cx = canvas.width/2, cy = canvas.height/2;
   const radius = canvas.width/2 - 4;
 
+  // Background circle
   ctx.fillStyle = 'rgba(0,0,0,0.7)';
   ctx.beginPath(); ctx.arc(cx,cy,radius,0,Math.PI*2); ctx.fill();
   ctx.strokeStyle = '#1f2937'; ctx.lineWidth = 2;
   ctx.beginPath(); ctx.arc(cx,cy,radius,0,Math.PI*2); ctx.stroke();
-
-  ctx.strokeStyle = 'rgba(60,60,60,0.4)'; ctx.lineWidth = 1;
-  ctx.beginPath(); ctx.moveTo(cx-radius,cy); ctx.lineTo(cx+radius,cy);
-  ctx.moveTo(cx,cy-radius); ctx.lineTo(cx,cy+radius); ctx.stroke();
-
-  for(let i=1;i<=3;i++){
-    ctx.beginPath(); ctx.arc(cx,cy,radius*i/4,0,Math.PI*2);
-    ctx.strokeStyle='rgba(40,40,50,0.3)'; ctx.stroke();
-  }
 
   if(!lastData || !lastData.localPlayer){
     ctx.fillStyle = '#555'; ctx.font = '14px Tahoma'; ctx.textAlign = 'center';
@@ -138,6 +129,7 @@ function draw(){
     cosY = Math.cos(yawRad); sinY = Math.sin(yawRad);
   }
 
+  // World-to-screen projection (with rotation if enabled)
   function project(wx, wy){
     let dx = wx - lp.x, dy = wy - lp.y;
     let rx = doRotate ? dx * cosY - dy * sinY : dx;
@@ -150,46 +142,42 @@ function draw(){
     return {x:px, y:py};
   }
 
-  // Load map image if map changed
+  // Load map image
   if(lastData.map){
     const m = lastData.map.match(/\/([^\/]+?)(?:\.vpk)?$/);
     const shortName = m ? m[1] : '';
     if(shortName) loadMapImage(shortName);
   }
 
-  // Draw map image as background (positioned by minimap bounds)
+  // Draw map image
   const mm = lastData.minimap;
   const hasBounds = mm && (mm.maxX > mm.minX);
 
   if(mapImg && mapImg.complete && mapImg.naturalWidth > 0 && hasBounds){
-    // Project all 4 corners of the map bounds
-    const tl = project(mm.minX, mm.maxY);  // top-left
-    const tr = project(mm.maxX, mm.maxY);  // top-right
-    const bl = project(mm.minX, mm.minY);  // bottom-left
-    const br = project(mm.maxX, mm.minY);  // bottom-right
+    // Project 3 corners: image (0,0)=top-left=(minX,maxY), (W,0)=top-right=(maxX,maxY), (0,H)=bottom-left=(minX,minY)
+    const tl = project(mm.minX, mm.maxY);
+    const tr = project(mm.maxX, mm.maxY);
+    const bl = project(mm.minX, mm.minY);
 
-    // Draw the image stretched to fit the projected bounds
+    const imgW = mapImg.naturalWidth;
+    const imgH = mapImg.naturalHeight;
+
     ctx.save();
-    // Clip to circle
     ctx.beginPath();
     ctx.arc(cx, cy, radius, 0, Math.PI*2);
     ctx.clip();
 
-    // Use transform to map image corners to projected corners
-    const dx = tr.x - tl.x;
-    const dy = tr.y - tl.y;
-    const ddx = bl.x - tl.x;
-    const ddy = bl.y - tl.y;
+    // Affine transform mapping image space to projected space
     ctx.transform(
-      dx / mapImg.naturalWidth, dy / mapImg.naturalWidth,
-      ddx / mapImg.naturalHeight, ddy / mapImg.naturalHeight,
+      (tr.x - tl.x) / imgW, (tr.y - tl.y) / imgW,
+      (bl.x - tl.x) / imgH, (bl.y - tl.y) / imgH,
       tl.x, tl.y
     );
     ctx.globalAlpha = 0.85;
     ctx.drawImage(mapImg, 0, 0);
     ctx.restore();
   } else if(hasBounds){
-    // Fallback: draw bounds rectangle + grid if image not loaded
+    // Fallback: rectangle
     const tl = project(mm.minX, mm.maxY);
     const tr = project(mm.maxX, mm.maxY);
     const bl = project(mm.minX, mm.minY);
@@ -212,6 +200,7 @@ function draw(){
     ctx.fillText(currentMapName, 8, canvas.height - 8);
   }
 
+  // Bomb
   if(lastData.bomb && lastData.bomb.found){
     const bp = project(lastData.bomb.x, lastData.bomb.y);
     ctx.fillStyle = '#ffdc00'; ctx.fillRect(bp.x-5, bp.y-5, 10, 10);
@@ -222,6 +211,7 @@ function draw(){
     }
   }
 
+  // Players
   if(lastData.players){
     for(const p of lastData.players){
       const pp = project(p.x, p.y);
@@ -245,11 +235,13 @@ function draw(){
     }
   }
 
+  // Local player (center dot)
   ctx.fillStyle = '#ffffff';
   ctx.beginPath(); ctx.arc(cx, cy, 5, 0, Math.PI*2); ctx.fill();
   ctx.strokeStyle = '#000'; ctx.lineWidth = 1.5;
   ctx.beginPath(); ctx.arc(cx, cy, 5, 0, Math.PI*2); ctx.stroke();
 
+  // View direction
   if(doRotate){
     ctx.strokeStyle = '#00e5ff'; ctx.lineWidth = 2;
     ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(cx, cy - 16); ctx.stroke();
