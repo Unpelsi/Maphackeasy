@@ -35,7 +35,7 @@ canvas{border:2px solid #1f2937;border-radius:12px;background:#08080c;box-shadow
 <div class="controls">
   <label>Scale: <input type="range" id="scale" min="1" max="12" step="0.5" value="4"></label>
   <label>Size: <input type="range" id="size" min="300" max="800" step="20" value="520"></label>
-  <label>Rotate: <select id="rotate"><option value="1">Follow View</option><option value="0">North Up</option></select></label>
+  <label>Rotate: <select id="rotate"><option value="0" selected>North Up</option><option value="1">Follow View</option></select></label>
   <label><input type="checkbox" id="names" checked> Names</label>
   <label><input type="checkbox" id="hp" checked> HP</label>
 </div>
@@ -62,12 +62,40 @@ let lastData = null;
 let lastFetchOk = false;
 let mapImg = null;
 let currentMapName = '';
+let overviews = null;  // loaded from overviews.json
+let imgWorldW = 0;     // image width in world units
+let imgWorldH = 0;     // image height in world units
+let imgOriginX = 0;    // world X of image top-left
+let imgOriginY = 0;    // world Y of image top-left
+
+// Load overview data
+fetch('/overviews.json').then(r => r.json()).then(data => {
+  overviews = data;
+  console.log('Overviews loaded:', Object.keys(overviews).length, 'maps');
+}).catch(() => console.warn('Failed to load overviews.json'));
 
 function loadMapImage(mapName){
   if(mapName === currentMapName && mapImg) return;
   currentMapName = mapName;
+  mapImg = null;
+  // Try overview data first for de_anubis variations etc
+  let ov = overviews ? overviews[mapName] : null;
+  // Fallback: try _s2 variant for newer maps
+  if(!ov && overviews) ov = overviews[mapName + '_s2'] || overviews[mapName + '_v1'] || overviews[mapName + '_v2'];
+  
   mapImg = new Image();
-  mapImg.onload = () => { console.log('Map loaded:', mapName, mapImg.naturalWidth + 'x' + mapImg.naturalHeight); };
+  mapImg.onload = () => {
+    if(ov){
+      imgWorldW = mapImg.naturalWidth * ov.s;
+      imgWorldH = mapImg.naturalHeight * ov.s;
+      imgOriginX = ov.px;
+      imgOriginY = ov.py;
+      console.log('Map:', mapName, 'img=' + mapImg.naturalWidth + 'x' + mapImg.naturalHeight, 'world=' + imgWorldW.toFixed(0) + 'x' + imgWorldH.toFixed(0), 'origin=' + imgOriginX + ',' + imgOriginY, 'scale=' + ov.s);
+    } else {
+      // Fallback: use DLL minimap bounds (less precise)
+      console.log('Map loaded, no overview data:', mapName, mapImg.naturalWidth + 'x' + mapImg.naturalHeight);
+    }
+  };
   mapImg.onerror = () => { mapImg = null; console.warn('Map image not found:', mapName); };
   mapImg.src = '/maps/' + mapName + '_radar_psd.png';
 }
@@ -129,7 +157,7 @@ function draw(){
     cosY = Math.cos(yawRad); sinY = Math.sin(yawRad);
   }
 
-  // World-to-screen projection (with rotation if enabled)
+  // World-to-screen projection (clips to circle for player dots)
   function project(wx, wy){
     let dx = wx - lp.x, dy = wy - lp.y;
     let rx = doRotate ? dx * cosY - dy * sinY : dx;
@@ -142,6 +170,14 @@ function draw(){
     return {x:px, y:py};
   }
 
+  // Same as project but NO clipping (for map corners)
+  function projectUnclipped(wx, wy){
+    let dx = wx - lp.x, dy = wy - lp.y;
+    let rx = doRotate ? dx * cosY - dy * sinY : dx;
+    let ry = doRotate ? dx * sinY + dy * cosY : dy;
+    return { x: cx + rx / scale, y: cy - ry / scale };
+  }
+
   // Load map image
   if(lastData.map){
     const m = lastData.map.match(/\/([^\/]+?)(?:\.vpk)?$/);
@@ -149,15 +185,34 @@ function draw(){
     if(shortName) loadMapImage(shortName);
   }
 
-  // Draw map image
+  // Use overview data if available, otherwise fall back to DLL minimap bounds
   const mm = lastData.minimap;
-  const hasBounds = mm && (mm.maxX > mm.minX);
+  const hasDllBounds = mm && (mm.maxX > mm.minX);
+  
+  // Determine world bounds for the image
+  let worldMinX, worldMaxX, worldMinY, worldMaxY;
+  if(overviews && currentMapName && mapImg && mapImg.complete && mapImg.naturalWidth > 0){
+    let ov = overviews[currentMapName];
+    if(!ov) ov = overviews[currentMapName + '_s2'] || overviews[currentMapName + '_v1'] || overviews[currentMapName + '_v2'];
+    if(ov){
+      worldMinX = ov.px;
+      worldMaxX = ov.px + mapImg.naturalWidth * ov.s;
+      worldMaxY = ov.py;
+      worldMinY = ov.py - mapImg.naturalHeight * ov.s;
+    } else if(hasDllBounds){
+      worldMinX = mm.minX; worldMaxX = mm.maxX;
+      worldMinY = mm.minY; worldMaxY = mm.maxY;
+    }
+  } else if(hasDllBounds){
+    worldMinX = mm.minX; worldMaxX = mm.maxX;
+    worldMinY = mm.minY; worldMaxY = mm.maxY;
+  }
 
-  if(mapImg && mapImg.complete && mapImg.naturalWidth > 0 && hasBounds){
-    // Project 3 corners: image (0,0)=top-left=(minX,maxY), (W,0)=top-right=(maxX,maxY), (0,H)=bottom-left=(minX,minY)
-    const tl = project(mm.minX, mm.maxY);
-    const tr = project(mm.maxX, mm.maxY);
-    const bl = project(mm.minX, mm.minY);
+  if(mapImg && mapImg.complete && mapImg.naturalWidth > 0 && worldMinX !== undefined){
+    // Project 3 corners using UNCLIPPED projection
+    const tl = projectUnclipped(worldMinX, worldMaxY);  // top-left
+    const tr = projectUnclipped(worldMaxX, worldMaxY);  // top-right
+    const bl = projectUnclipped(worldMinX, worldMinY);  // bottom-left
 
     const imgW = mapImg.naturalWidth;
     const imgH = mapImg.naturalHeight;
@@ -167,7 +222,7 @@ function draw(){
     ctx.arc(cx, cy, radius, 0, Math.PI*2);
     ctx.clip();
 
-    // Affine transform mapping image space to projected space
+    // Affine transform: image (0,0)→tl, (W,0)→tr, (0,H)→bl
     ctx.transform(
       (tr.x - tl.x) / imgW, (tr.y - tl.y) / imgW,
       (bl.x - tl.x) / imgH, (bl.y - tl.y) / imgH,
@@ -176,12 +231,12 @@ function draw(){
     ctx.globalAlpha = 0.85;
     ctx.drawImage(mapImg, 0, 0);
     ctx.restore();
-  } else if(hasBounds){
+  } else if(worldMinX !== undefined){
     // Fallback: rectangle
-    const tl = project(mm.minX, mm.maxY);
-    const tr = project(mm.maxX, mm.maxY);
-    const bl = project(mm.minX, mm.minY);
-    const br = project(mm.maxX, mm.minY);
+    const tl = projectUnclipped(worldMinX, worldMaxY);
+    const tr = projectUnclipped(worldMaxX, worldMaxY);
+    const bl = projectUnclipped(worldMinX, worldMinY);
+    const br = projectUnclipped(worldMaxX, worldMinY);
     ctx.strokeStyle = 'rgba(100,120,140,0.5)';
     ctx.lineWidth = 1.5;
     ctx.beginPath();
@@ -199,6 +254,11 @@ function draw(){
     ctx.font = '11px Tahoma'; ctx.textAlign = 'left';
     ctx.fillText(currentMapName, 8, canvas.height - 8);
   }
+
+  // Center crosshair
+  ctx.strokeStyle = 'rgba(60,60,60,0.4)'; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(cx-radius,cy); ctx.lineTo(cx+radius,cy);
+  ctx.moveTo(cx,cy-radius); ctx.lineTo(cx,cy+radius); ctx.stroke();
 
   // Bomb
   if(lastData.bomb && lastData.bomb.found){
@@ -241,7 +301,7 @@ function draw(){
   ctx.strokeStyle = '#000'; ctx.lineWidth = 1.5;
   ctx.beginPath(); ctx.arc(cx, cy, 5, 0, Math.PI*2); ctx.stroke();
 
-  // View direction
+  // View direction arrow
   if(doRotate){
     ctx.strokeStyle = '#00e5ff'; ctx.lineWidth = 2;
     ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(cx, cy - 16); ctx.stroke();
