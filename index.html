@@ -139,29 +139,8 @@ function draw(){
     return {x:px, y:py};
   }
 
-  // Draw map bounds — use hardcoded CS2 map bounds
-  const MAP_BOUNDS = {
-    'de_dust2':     { minX: -2486, minY: -1750, maxX: 2486, maxY: 3322 },
-    'de_inferno':   { minX: -2085, minY: -1280, maxX: 2085, maxY: 2830 },
-    'de_mirage':    { minX: -2670, minY: -1700, maxX: 2670, maxY: 2600 },
-    'de_nuke':      { minX: -2240, minY: -960,  maxX: 2240, maxY: 1920 },
-    'de_overpass':  { minX: -2490, minY: -1290, maxX: 2490, maxY: 2490 },
-    'de_cache':     { minX: -2000, minY: -2000, maxX: 2000, maxY: 2000 },
-    'de_train':     { minX: -2480, minY: -1480, maxX: 2480, maxY: 2480 },
-    'de_ancient':   { minX: -2350, minY: -1500, maxX: 2350, maxY: 2800 },
-    'de_vertigo':   { minX: -3160, minY: -2600, maxX: 3160, maxY: 2600 },
-    'de_anubis':    { minX: -2400, minY: -1700, maxX: 2400, maxY: 2700 },
-    'de_breeze':    { minX: -3100, minY: -2600, maxX: 3100, maxY: 3100 }
-  };
-
-  let mapKey = '';
-  if(lastData.map){
-    // Extract map name from "maps/de_inferno.vpk" format
-    const m = lastData.map.match(/\/([^\/]+?)(?:\.vpk)?$/);
-    if(m) mapKey = m[1];
-  }
-
-  const mm = MAP_BOUNDS[mapKey] || lastData.minimap;
+  // Draw map bounds — use DLL-provided minimap bounds
+  const mm = lastData.minimap;
   const hasBounds = mm && (mm.maxX > mm.minX);
 
   if(hasBounds){
@@ -196,10 +175,12 @@ function draw(){
   }
 
   // Map name label
-  if(mapKey){
+  if(lastData.map){
+    const m = lastData.map.match(/\/([^\/]+?)(?:\.vpk)?$/);
+    const shortName = m ? m[1] : lastData.map;
     ctx.fillStyle = 'rgba(150,170,190,0.6)';
     ctx.font = '11px Tahoma'; ctx.textAlign = 'left';
-    ctx.fillText(mapKey, 8, canvas.height - 8);
+    ctx.fillText(shortName, 8, canvas.height - 8);
   }
 
   if(lastData.bomb && lastData.bomb.found){
